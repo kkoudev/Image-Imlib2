@@ -1,8 +1,8 @@
 Image-Imlib2 for scale denom supported
 ============
 
-This Image-Imlib2 is supported scale denom.
-Plese use as a dependency "<a href="https://github.com/kkoudev/imlib2">Imlib2 for scale denom supported</a>" in order to use it Imlib2 for scale denom supported is dependencied.
+This Image-Imlib2 is supported scale denom.<br>
+Plese use as a dependency "<a href="https://github.com/kkoudev/imlib2">Imlib2 for scale denom supported</a>" in order to use it Imlib2 for scale denom supported is dependencied.<br>
 
 
 <h2>MANUAL</h2>
