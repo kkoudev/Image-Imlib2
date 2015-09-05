@@ -1,0 +1,575 @@
+#!/usr/bin/env perl
+
+=pod
+
+=head1 imlib2 command script
+
+This script calls the processing of imlib2.
+
+=head1 SYNOPSIS
+
+imlib2 (command type) (argument01) (argument02) ... (argumentXX)
+
+=head1 COMMAND TYPES
+
+=head2 -convert
+
+Convert a image format and quality.
+
+When a image format isn't specified, It is take from output specified image file path extension.
+
+=head3 Arguments
+
+=over 1
+
+=item 1. output image file path
+
+=item 2. source image file path
+
+=item 3. image quality
+
+=item 4. image format (ex: "jpeg", "tiff", "png", etc) (optional)
+
+=back
+
+=head2 -resize
+
+Simple resize a image.
+
+=head3 Arguments
+
+=over 1
+
+=item 1. output image file path
+
+=item 2. source image file path
+
+=item 3. resize geometry widthxheight (ex: 200x100)
+
+=item 4. image quality (optional)
+
+=back
+
+=head2 -compose_bgresize
+
+Compose a background color and a resized image.
+
+=head3 Arguments
+
+=over 1
+
+=item 1. output image file path
+
+=item 2. background color R,G,B,A (ex: 255,0,0,255) or color name (white, black, red, green or blue)
+
+=item 3. background size geometry widthxheight (ex: 200x100)
+
+=item 4. gravity
+
+=item 5. source image file path
+
+=item 6. resize geometry widthxheight (ex: 200x100)
+
+=item 7. image quality (optional)
+
+=back
+
+=head2 -version
+
+Show current version.
+
+=cut
+
+use strict;
+use warnings;
+use Image::Imlib2;
+
+
+##
+# get geometry size.
+#
+# [Arguments]
+# 1 : specified geometry
+# 2 : source image width
+# 3 : source image height
+#
+# [Return]
+# {width => (value), height => (value)}
+#
+sub getGeometrySize {
+
+    my $geometry          = shift;
+    my $sourceImageWidth  = shift;
+    my $sourceImageHeight = shift;
+    my $useGeometry       = $geometry;
+    my $keepAspect;
+
+    # disable keep aspect?
+    if (substr($useGeometry, -1, 1) eq '!') {
+
+        # delete aspect token
+        $useGeometry = substr($useGeometry, 0, length($useGeometry) - 1);
+
+        # disable keep aspect
+        $keepAspect = 0;
+
+    } else {
+
+        # enable keep aspect
+        $keepAspect = 1;
+
+    }
+
+    # divide width and height
+    my @size = split(/x/, $useGeometry);
+
+    # illegal geometry?
+    if (scalar(@size) != 2) {
+
+        die "Illegal size geometry. [geometry = " . $useGeometry . "]";
+
+    }
+
+    my $specifiedWidth  = $size[0];
+    my $specifiedHeight = $size[1];
+
+    # no keep aspect?
+    if ($keepAspect == 0 or !defined $sourceImageWidth or !defined $sourceImageHeight) {
+
+        # return size
+        return {width => $specifiedWidth, height => $specifiedHeight};
+
+    }
+
+    # calculate size ratio
+    my $widthRatio  = $specifiedWidth  / $sourceImageWidth;
+    my $heightRatio = $specifiedHeight / $sourceImageHeight;
+    my $useWidth;
+    my $useHeight;
+
+    # over specified image height than edit source image height?
+    if (int($widthRatio * $sourceImageHeight) <= $specifiedHeight) {
+
+        # set using image size
+        $useWidth = $specifiedWidth;
+
+    } else {
+
+        # set height ratio source width
+        $useWidth = int($heightRatio * $sourceImageWidth + 0.9);
+
+        # over specified image width?
+        if ($useWidth > $specifiedWidth) {
+
+            # set specified image width
+            $useWidth = $specifiedWidth;
+
+        }
+
+    }
+
+    # calculate the ratio of new width and old width
+    my $ratioNewWidth = $useWidth / $sourceImageWidth;
+
+    # set using image height
+    $useHeight = int($sourceImageHeight * $ratioNewWidth + 0.9);
+
+    # over specified image height?
+    if ($useHeight > $specifiedHeight) {
+
+        # set specified image height
+        $useHeight = $specifiedHeight;
+
+    }
+
+    # return size
+    return {width => $useWidth, height => $useHeight};
+
+}
+
+
+##
+# get constant color.
+#
+# constant color is
+# white, black, red, green or blue
+#
+# [Arguments]
+# 1 : color name
+#
+# [Return]
+# {red => (value), green => (value), blue => (value), alpha => (value)}
+#
+sub getConstantColor {
+
+    my $colorName = shift;
+
+    # white
+    if ($colorName =~ /white/i) {
+
+        # return color
+        return {red => 255, green => 255, blue => 255, alpha => 255};
+
+    # black
+    } elsif ($colorName =~ /black/i) {
+
+        # return color
+        return {red => 0, green => 0, blue => 0, alpha => 255};
+
+    # red
+    } elsif ($colorName =~ /red/i) {
+
+        # return color
+        return {red => 255, green => 0, blue => 0, alpha => 255};
+
+    # green
+    } elsif ($colorName =~ /green/i) {
+
+        # return color
+        return {red => 0, green => 255, blue => 0, alpha => 255};
+
+    # blue
+    } elsif ($colorName =~ /blue/i) {
+
+        # return color
+        return {red => 0, green => 0, blue => 255, alpha => 255};
+
+    # error
+    } else {
+
+        die "Unknown color name [name = $colorName]\n";
+
+    }
+
+}
+
+
+##
+# get gravity position.
+#
+# "gravity" is
+# NorthWest, North, NorthEast, West, Center, East, SouthWest, South, or SouthEast
+#
+# [Arguments]
+# 1 : gravity
+# 2 : destination width
+# 3 : destination height
+# 4 : source width
+# 5 : source height
+#
+# [Return]
+# {left => (value), top => (value)}
+#
+sub getGravityPosition {
+
+    my $gravity     = shift;
+    my $destWidth   = shift;
+    my $destHeight  = shift;
+    my $srcWidth    = shift;
+    my $srcHeight   = shift;
+
+    # NorthWest
+    if ($gravity =~ /NorthWest/i) {
+
+        # return position
+        return {left => 0, top => 0};
+
+    # North
+    } elsif ($gravity =~ /North/i) {
+
+        # return position
+        return {left => int(($destWidth - $srcWidth) / 2), top => 0};
+
+    # NorthEast
+    } elsif ($gravity =~ /NorthEast/i) {
+
+        # return position
+        return {left => ($destWidth - $srcWidth), top => 0};
+
+    # West
+    } elsif ($gravity =~ /West/i) {
+
+        # return position
+        return {left => 0, top => int(($destHeight - $srcHeight) / 2)};
+
+    # Center
+    } elsif ($gravity =~ /Center/i) {
+
+        # return position
+        return {left => int(($destWidth - $srcWidth) / 2), top => int(($destHeight - $srcHeight) / 2)};
+
+    # East
+    } elsif ($gravity =~ /East/i) {
+
+        # return position
+        return {left => ($destWidth - $srcWidth), top => int(($destHeight - $srcHeight) / 2)};
+
+    # SouthWest
+    } elsif ($gravity =~ /SouthWest/i) {
+
+        # return position
+        return {left => 0, top => ($destHeight - $srcHeight)};
+
+    # South
+    } elsif ($gravity =~ /South/i) {
+
+        # return position
+        return {left => int(($destWidth - $srcWidth) / 2), top => ($destHeight - $srcHeight)};
+
+    # SouthEast
+    } elsif ($gravity =~ /SouthEast/i) {
+
+        # return position
+        return {left => ($destWidth - $srcWidth), top => ($destHeight - $srcHeight)};
+
+    # error
+    } else {
+
+        die "Unknown gravity type [type = $gravity]\n";
+
+    }
+
+}
+
+# define command processers
+my %executeProcesses = (
+
+    # version
+    '-version' => sub {
+
+        print "Imlib2 20141013 (fork version)\n";
+        print "https://github.com/kkoudev/imlib2\n";
+
+    },
+
+    # Convert a image format
+    '-convert' => sub {
+
+        # judge illegal argument count
+        if (scalar(@_) < 1 || scalar(@_) > 4) {
+
+            die "Illegal arguments count. [count = " . scalar(@_) . "]\n";
+
+        }
+
+        # get parameters
+        my $imageOutputFilePath     = shift;
+        my $imageSourceFilePath     = shift;
+        my $imageQuality            = shift;
+        my $imageFormat             = shift;
+
+        # error catch
+        eval {
+
+            # load image
+            my $image = Image::Imlib2->load($imageSourceFilePath);
+
+            # set quality
+            $image->set_quality($imageQuality);
+
+            # specify a image format?
+            if (defined $imageFormat) {
+
+                # set specified image format
+                $image->image_set_format($imageFormat);
+
+            # contains a extension of specified output file path?
+            } elsif ($imageOutputFilePath =~ /\.([\w]+)$/) {
+
+                # set image format from specified output file path
+                $image->image_set_format($1);
+
+            # error
+            } else {
+
+                die "Specify a image format.\n";
+
+            }
+
+            # save image
+            $image->save($imageOutputFilePath);
+
+        };
+
+        # error occurred
+        if ($@) {
+
+            die "ERROR: $@\n";
+
+        }
+
+    },
+
+    # resize image
+    '-resize' => sub {
+
+        # judge illegal argument count
+        if (scalar(@_) < 3 || scalar(@_) > 4) {
+
+            die "Illegal arguments count. [count = " . scalar(@_) . "]\n";
+
+        }
+
+        # get parameters
+        my $imageOutputFilePath     = shift;
+        my $imageSourceFilePath     = shift;
+        my $imageFileResizeGeometry = shift;
+        my $imageQuality            = shift;
+
+        # error catch
+        eval {
+
+            # get load size
+            my $loadSize = getGeometrySize($imageFileResizeGeometry);
+
+            # load image
+            my $image = Image::Imlib2->load_scale($imageSourceFilePath, $loadSize->{width}, $loadSize->{height});
+
+            # get using scale size
+            my $usingScaleSize = getGeometrySize($imageFileResizeGeometry, $image->width, $image->height);
+
+            # resize
+            $image = $image->create_scaled_image($usingScaleSize->{width}, $usingScaleSize->{height});
+            $image->set_quality($imageQuality) if (defined $imageQuality);
+
+            # save image
+            $image->save($imageOutputFilePath);
+
+        };
+
+        # error occurred
+        if ($@) {
+
+            die "ERROR: $@\n";
+
+        }
+
+    },
+
+    # compose a background color and a resized image.
+    '-compose_bgresize' => sub {
+
+        # judge illegal argument count
+        if (scalar(@_) < 6 || scalar(@_) > 7) {
+
+            die "Illegal arguments count. [count = " . scalar(@_) . "]\n";
+
+        }
+
+        # get parameters
+        my $imageOutputFilePath     = shift;
+        my $backgroundColor         = shift;
+        my $backgroundGeometry      = shift;
+        my $gravity                 = shift;
+        my $imageSourceFilePath     = shift;
+        my $imageFileResizeGeometry = shift;
+        my $imageQuality            = shift;
+
+        # split colors
+        my @colorParams = split(/,/, $backgroundColor);
+
+        my $colorRed;
+        my $colorGreen;
+        my $colorBlue;
+        my $colorAlpha;
+
+        # error catch
+        eval {
+
+            # is color name?
+            if (scalar(@colorParams) == 1) {
+
+                my $colorNameRGBA = getConstantColor($colorParams[0]);
+
+                # set color name rgb values
+                $colorRed   = $colorNameRGBA->{red};
+                $colorGreen = $colorNameRGBA->{green};
+                $colorBlue  = $colorNameRGBA->{blue};
+                $colorAlpha = $colorNameRGBA->{alpha};
+
+            } else {
+
+                # set specified rgb values
+                $colorRed    = $colorParams[0];
+                $colorGreen  = $colorParams[1];
+                $colorBlue   = $colorParams[2];
+                $colorAlpha  = $colorParams[3];
+
+            }
+
+            # get using background size
+            my $usingBackgroundSize = getGeometrySize($backgroundGeometry);
+
+            # set image cache
+            Image::Imlib2->set_cache_size($usingBackgroundSize->{width} * $usingBackgroundSize->{height});
+
+            # create background image
+            my $backgroundImage = Image::Imlib2->new($usingBackgroundSize->{width}, $usingBackgroundSize->{height});
+
+            # set background color
+            $backgroundImage->set_color($colorRed, $colorGreen, $colorBlue, $colorAlpha);
+            $backgroundImage->fill_rectangle(0, 0, $backgroundImage->width, $backgroundImage->height);
+
+
+            # get load size
+            my $loadSize = getGeometrySize($imageFileResizeGeometry);
+
+            # load source image
+            my $imageSource = Image::Imlib2->load_scale($imageSourceFilePath, $loadSize->{width}, $loadSize->{height});
+
+            # get using scale size
+            my $usingScaleSize = getGeometrySize($imageFileResizeGeometry, $imageSource->width, $imageSource->height);
+
+            # resize
+            $imageSource = $imageSource->create_scaled_image($usingScaleSize->{width}, $usingScaleSize->{height});
+            $imageSource->set_quality($imageQuality) if (defined $imageQuality);
+
+            # gravity position
+            my $gravityPosition = getGravityPosition(
+                $gravity, $usingBackgroundSize->{width}, $usingBackgroundSize->{height}, $usingScaleSize->{width}, $usingScaleSize->{height}
+                );
+
+            # compose image
+            $backgroundImage->blend(
+                $imageSource,
+                0,
+                0,
+                0,
+                $imageSource->width,
+                $imageSource->height,
+                $gravityPosition->{left},
+                $gravityPosition->{top},
+                $imageSource->width,
+                $imageSource->height
+                );
+
+            # save image
+            $backgroundImage->save($imageOutputFilePath);
+
+        };
+
+        # error occurred
+        if ($@) {
+
+            die "ERROR: $@\n";
+
+        }
+
+    }
+
+
+);
+
+# get command type processer
+my $executeProcess = $executeProcesses{$ARGV[0]};
+
+# unknown command type?
+if (!$executeProcess) {
+
+    die "Unknown command type. [type = $ARGV[0]]\n";
+
+}
+
+# execute command
+$executeProcess->(@ARGV[1..$#ARGV]);
+
