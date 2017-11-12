@@ -2,7 +2,7 @@ use Module::Build;
 use strict;
 
 # We need to find imlib2-config
-my $CONFIG = "imlib2-config";
+my $CONFIG = "/usr/local/bin/imlib2-config";
 
 my $version = `$CONFIG --version`;
 if (!$version) {
